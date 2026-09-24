@@ -16,6 +16,7 @@ src/
     FrameParser.cs             incremental parser state machine with resync
     Messages.cs                typed records, ToFrame() / Message.Decode()
     HidUsage.cs                HID keyboard usage codes (what goes on the wire)
+    ProtocolFile.cs            .msdr file format: save/load message sequences, streaming reader/writer
     MisdirectionClient.cs      Stream/SerialPort client with events + PingAsync
   Misdirection.Client.Tests/   xunit; TestData/protocol-vectors.json drives the codec tests
 etc/
@@ -48,6 +49,35 @@ await client.PanicAsync();                       // release everything
 
 Keys are HID usage codes (`HidUsage.A` is `0x04`), not characters. Mapping from
 whatever your input source produces is the caller's job, as the protocol intends.
+
+## Saving messages to a file
+
+`ProtocolFile` serializes a message sequence to disk and back. The body of the file
+is the wire encoding itself (frames back to back), behind a 6-byte header: magic
+`MSDR`, a file-format version, and the protocol version the frames were written with.
+Every message round-trips exactly, and the bytes after the header can be replayed to
+the device as-is.
+
+```csharp
+// whole sequence at once
+ProtocolFile.Write("drag.msdr", [
+    new KeyDownMessage(HidUsage.LeftShift),
+    new MouseMoveMessage(100, 100),
+    new KeyUpMessage(HidUsage.LeftShift),
+]);
+IReadOnlyList<Message> messages = ProtocolFile.Read("drag.msdr");
+
+// streaming, e.g. recording a session as it happens
+using (var writer = ProtocolFileWriter.Append("session.msdr"))
+    writer.Write(new PingMessage());
+
+using var reader = ProtocolFileReader.Open("session.msdr");
+while (reader.TryRead(out var message))
+    Console.WriteLine(message);
+```
+
+Reading is strict: a bad header, a byte between frames, a bad checksum, an unknown
+type or a truncated final frame throws `ProtocolFileException` naming the offset.
 
 ## Tests
 

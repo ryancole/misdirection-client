@@ -29,6 +29,9 @@ public sealed class FrameParser
     /// <summary>Running count of discarded frames, for diagnostics.</summary>
     public long DiscardedCount { get; private set; }
 
+    /// <summary>True when no frame is in progress, i.e. the next byte must be a start-of-frame marker.</summary>
+    public bool IsIdle => _state == State.Hunt;
+
     /// <summary>
     /// When true (the default), a type byte that is not a defined <see cref="MessageType"/> discards the
     /// frame, as the spec requires. Set false to pass unknown types through, e.g. for protocol tooling.
