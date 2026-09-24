@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Misdirection.Client.Tests/Misdirection.Client.Tests.csproj" />
+  <Project Path="Misdirection.Client/Misdirection.Client.csproj" />
+</Solution>
