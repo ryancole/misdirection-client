@@ -11,7 +11,7 @@
     <!-- CS1591: enum members and thin overloads don't each need a doc comment. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
     <Description>Host-side client for the misdirection Teensy HID bridge wire protocol.</Description>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

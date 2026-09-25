@@ -31,9 +31,19 @@ public static class Protocol
 
     /// <summary>Largest screen dimension the firmware core will accept per axis.</summary>
     public const ushort MaxScreenDimension = 7680;
+
+    /// <summary>
+    /// True for record types that exist only inside <c>.msdr</c> files and are never valid on the wire
+    /// (currently just <see cref="MessageType.FileDelay"/>). The type-range test in
+    /// <see cref="Message.IsHostToDevice"/> cannot tell these apart from real host-to-device messages.
+    /// </summary>
+    public static bool IsFileOnly(MessageType type) => type == MessageType.FileDelay;
 }
 
-/// <summary>Frame type byte. Host-to-device types are &lt; 0x80; device-to-host are &gt;= 0x80.</summary>
+/// <summary>
+/// Frame type byte. Host-to-device types are &lt; 0x80; device-to-host are &gt;= 0x80. 0x7F is reserved
+/// for the file-only <see cref="FileDelay"/> record so the wire and file namespaces cannot collide.
+/// </summary>
 public enum MessageType : byte
 {
     Panic = 0x00,
@@ -44,6 +54,9 @@ public enum MessageType : byte
     MouseWheel = 0x05,
     ScreenSize = 0x06,
     Ping = 0x07,
+
+    /// <summary>Gap before the next frame in a <c>.msdr</c> file. Never sent on the wire.</summary>
+    FileDelay = 0x7F,
 
     Pong = 0x80,
     Nack = 0x81,

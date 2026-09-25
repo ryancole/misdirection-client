@@ -1,11 +1,17 @@
 namespace Misdirection.Client;
 
-/// <summary>Why the parser threw a frame away and went back to HUNT.</summary>
+/// <summary>Why a received frame was thrown away. The parser raises the first three after resyncing to HUNT.</summary>
 public enum FrameDiscardReason
 {
     BadChecksum,
     UnknownType,
     BadLength,
+
+    /// <summary>
+    /// A well-formed frame carried a file-only record type (<see cref="MessageType.FileDelay"/>), which
+    /// is never valid on the wire. Raised by <see cref="MisdirectionClient"/>, not the parser.
+    /// </summary>
+    FileOnlyType,
 }
 
 /// <summary>

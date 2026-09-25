@@ -67,7 +67,7 @@ public class FrameParserTests
         var reasons = new List<FrameDiscardReason>();
         parser.FrameDiscarded += reasons.Add;
 
-        var frames = parser.Feed(new byte[] { 0xAB, 0x7F, 0x00, 0x7F }.Concat(Pong).ToArray());
+        var frames = parser.Feed(new byte[] { 0xAB, 0x7E, 0x00, 0x7E }.Concat(Pong).ToArray());
 
         Assert.Single(frames);
         Assert.Equal([FrameDiscardReason.UnknownType], reasons);
@@ -77,9 +77,9 @@ public class FrameParserTests
     public void UnknownTypeCanBePassedThrough()
     {
         var parser = new FrameParser { RejectUnknownTypes = false };
-        var frames = parser.Feed([0xAB, 0x7F, 0x01, 0x42, 0xC2]);
+        var frames = parser.Feed([0xAB, 0x7E, 0x01, 0x42, 0xC1]);
         var frame = Assert.Single(frames);
-        Assert.Equal((MessageType)0x7F, frame.Type);
+        Assert.Equal((MessageType)0x7E, frame.Type);
         Assert.Equal([0x42], frame.Payload.ToArray());
     }
 

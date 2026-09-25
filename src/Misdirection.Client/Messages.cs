@@ -13,8 +13,18 @@ public abstract record Message
     /// <summary>Payload bytes, little-endian per the spec.</summary>
     protected abstract byte[] EncodePayload();
 
-    /// <summary>True for host-to-device messages (type &lt; 0x80).</summary>
+    /// <summary>
+    /// True for host-to-device message types (type &lt; 0x80). This is true for <see cref="DelayMessage"/>
+    /// as well, so check <see cref="IsFileOnly"/> before putting a message on the wire.
+    /// </summary>
     public bool IsHostToDevice => (byte)Type < 0x80;
+
+    /// <summary>
+    /// True for records that exist only inside <c>.msdr</c> files and must never be sent to the device
+    /// (currently only <see cref="DelayMessage"/>). <see cref="MisdirectionClient.SendAsync(Message, CancellationToken)"/>
+    /// rejects them.
+    /// </summary>
+    public bool IsFileOnly => Protocol.IsFileOnly(Type);
 
     public Frame ToFrame() => new(Type, EncodePayload());
 
@@ -41,7 +51,7 @@ public abstract record Message
             MessageType.KeyDown or MessageType.KeyUp or MessageType.MouseButtons
                 or MessageType.Pong or MessageType.Nack => 1,
             MessageType.MouseWheel => 2,
-            MessageType.MouseMove or MessageType.ScreenSize => 4,
+            MessageType.MouseMove or MessageType.ScreenSize or MessageType.FileDelay => 4,
             _ => -1,
         };
 
@@ -70,6 +80,7 @@ public abstract record Message
             MessageType.Ping => new PingMessage(),
             MessageType.Pong => new PongMessage(p[0]),
             MessageType.Nack => new NackMessage((NackReason)p[0]),
+            MessageType.FileDelay => new DelayMessage(BinaryPrimitives.ReadUInt32LittleEndian(p)),
             _ => throw new InvalidOperationException(),
         };
         return true;
@@ -155,6 +166,28 @@ public sealed record NackMessage(NackReason Reason) : Message
 {
     public override MessageType Type => MessageType.Nack;
     protected override byte[] EncodePayload() => [(byte)Reason];
+}
+
+/// <summary>
+/// File-only record: the time that elapsed before the next frame in a <c>.msdr</c> file, in whole
+/// microseconds. It borrows the frame encoding so a file stays a plain run of frames, but it is never
+/// valid on the wire: the client refuses to send it, and a replayer waits instead of writing it.
+/// Gaps longer than <see cref="uint.MaxValue"/> microseconds (about 71.6 minutes) are stored as several
+/// consecutive records; see <see cref="ProtocolFileWriter.WriteDelay"/>.
+/// </summary>
+public sealed record DelayMessage(uint Microseconds) : Message
+{
+    public override MessageType Type => MessageType.FileDelay;
+
+    /// <summary>The delay as a <see cref="TimeSpan"/>. Exact, since a tick is 100 ns.</summary>
+    public TimeSpan Duration => TimeSpan.FromTicks(Microseconds * TimeSpan.TicksPerMicrosecond);
+
+    protected override byte[] EncodePayload()
+    {
+        var bytes = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes, Microseconds);
+        return bytes;
+    }
 }
 
 /// <summary>Thrown when bytes on the wire cannot be interpreted as a valid message.</summary>
