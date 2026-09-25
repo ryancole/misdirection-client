@@ -62,6 +62,7 @@ public static class ProtocolVectors
             "MOUSE_WHEEL" => new MouseWheelMessage((sbyte)f["vert"], (sbyte)f["horiz"]),
             "SCREEN_SIZE" => new ScreenSizeMessage((ushort)f["width"], (ushort)f["height"]),
             "PING" => new PingMessage(),
+            "MOUSE_MOVE_REL" => new MouseMoveRelMessage((short)f["dx"], (short)f["dy"]),
             "PONG" => new PongMessage((byte)f["version"]),
             "NACK" => new NackMessage((NackReason)f["reason"]),
             "FILE_DELAY" => new DelayMessage(checked((uint)f["micros"])),

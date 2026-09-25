@@ -44,6 +44,10 @@ await client.MouseMoveAsync(500, 400);
 await client.MouseButtonsAsync(MouseButtons.None);
 await client.KeyUpAsync(HidUsage.LeftShift);
 
+// nudge by a relative delta (HID units, scaled by the target's pointer speed);
+// for cursor-capturing apps, or when the target's screen size is unknown
+await client.MouseMoveRelAsync(10, -5);
+
 await client.PanicAsync();                       // release everything
 ```
 

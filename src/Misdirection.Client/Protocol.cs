@@ -54,6 +54,7 @@ public enum MessageType : byte
     MouseWheel = 0x05,
     ScreenSize = 0x06,
     Ping = 0x07,
+    MouseMoveRel = 0x08,
 
     /// <summary>Gap before the next frame in a <c>.msdr</c> file. Never sent on the wire.</summary>
     FileDelay = 0x7F,

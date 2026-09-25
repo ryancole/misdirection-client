@@ -77,6 +77,31 @@ public class VectorTests
     }
 
     [Fact]
+    public void VectorFileCoversTheMouseMoveRelRange()
+    {
+        // Both i16 extremes must be in the vectors so the sign handling is pinned against the firmware.
+        var rel = ProtocolVectors.All.Vectors.Where(v => v.TypeName == "MOUSE_MOVE_REL").ToArray();
+        Assert.NotEmpty(rel);
+        Assert.Contains(rel, v => v.Fields["dx"] == short.MinValue);
+        Assert.Contains(rel, v => v.Fields["dy"] == short.MaxValue);
+        Assert.Contains(rel, v => v.Fields["dy"] < 0);
+        Assert.All(rel, v => Assert.True(v.Wire));
+    }
+
+    [Fact]
+    public void MouseMoveRelRoundTripsSignedExtremes()
+    {
+        foreach (var (dx, dy) in new[] { (short.MinValue, short.MaxValue), ((short)-1, (short)1), ((short)0, (short)0), ((short)300, (short)-300) })
+        {
+            var message = new MouseMoveRelMessage(dx, dy);
+            var frame = Assert.Single(FrameParser.Parse(message.ToBytes()));
+            var decoded = Assert.IsType<MouseMoveRelMessage>(Message.Decode(frame));
+            Assert.Equal(dx, decoded.DeltaX);
+            Assert.Equal(dy, decoded.DeltaY);
+        }
+    }
+
+    [Fact]
     public void ShiftDragSequenceEncodesBackToBack()
     {
         // The spec's worked example: KEY_DOWN 0xE1, MOUSE_BTN 0x01, moves, MOUSE_BTN 0x00, KEY_UP 0xE1.
