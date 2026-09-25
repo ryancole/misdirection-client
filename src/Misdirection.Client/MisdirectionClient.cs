@@ -129,6 +129,13 @@ public sealed class MisdirectionClient : IAsyncDisposable, IDisposable
     public ValueTask MouseMoveAsync(ushort x, ushort y, CancellationToken ct = default) =>
         SendAsync(new MouseMoveMessage(x, y), ct);
 
+    /// <summary>
+    /// Move the pointer by a relative delta in HID units (see <see cref="MouseMoveRelMessage"/>). Unlike
+    /// <see cref="MouseMoveAsync"/> this needs no <see cref="ScreenSizeAsync"/> first and is not coalesced by the firmware.
+    /// </summary>
+    public ValueTask MouseMoveRelAsync(short deltaX, short deltaY, CancellationToken ct = default) =>
+        SendAsync(new MouseMoveRelMessage(deltaX, deltaY), ct);
+
     /// <summary>Set the absolute button mask.</summary>
     public ValueTask MouseButtonsAsync(MouseButtons buttons, CancellationToken ct = default) =>
         SendAsync(new MouseButtonsMessage(buttons), ct);

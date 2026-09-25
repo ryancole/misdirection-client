@@ -255,6 +255,72 @@
       ]
     },
     {
+      "name": "mouse_move_rel_10_-5",
+      "direction": "host_to_device",
+      "wire": true,
+      "type": 8,
+      "typeName": "MOUSE_MOVE_REL",
+      "fields": {
+        "dx": 10,
+        "dy": -5
+      },
+      "hex": "AB 08 04 0A 00 FB FF 10",
+      "bytes": [
+        171,
+        8,
+        4,
+        10,
+        0,
+        251,
+        255,
+        16
+      ]
+    },
+    {
+      "name": "mouse_move_rel_300_0",
+      "direction": "host_to_device",
+      "wire": true,
+      "type": 8,
+      "typeName": "MOUSE_MOVE_REL",
+      "fields": {
+        "dx": 300,
+        "dy": 0
+      },
+      "hex": "AB 08 04 2C 01 00 00 39",
+      "bytes": [
+        171,
+        8,
+        4,
+        44,
+        1,
+        0,
+        0,
+        57
+      ]
+    },
+    {
+      "name": "mouse_move_rel_extremes",
+      "direction": "host_to_device",
+      "wire": true,
+      "type": 8,
+      "typeName": "MOUSE_MOVE_REL",
+      "fields": {
+        "dx": -32768,
+        "dy": 32767
+      },
+      "hex": "AB 08 04 00 80 FF 7F 0A",
+      "bytes": [
+        171,
+        8,
+        4,
+        0,
+        128,
+        255,
+        127,
+        10
+      ]
+    },
+    {
       "name": "pong_v1",
       "direction": "device_to_host",
       "wire": true,

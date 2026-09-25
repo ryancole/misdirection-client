@@ -51,7 +51,7 @@ public abstract record Message
             MessageType.KeyDown or MessageType.KeyUp or MessageType.MouseButtons
                 or MessageType.Pong or MessageType.Nack => 1,
             MessageType.MouseWheel => 2,
-            MessageType.MouseMove or MessageType.ScreenSize or MessageType.FileDelay => 4,
+            MessageType.MouseMove or MessageType.MouseMoveRel or MessageType.ScreenSize or MessageType.FileDelay => 4,
             _ => -1,
         };
 
@@ -78,6 +78,8 @@ public abstract record Message
             MessageType.ScreenSize => new ScreenSizeMessage(
                 BinaryPrimitives.ReadUInt16LittleEndian(p), BinaryPrimitives.ReadUInt16LittleEndian(p[2..])),
             MessageType.Ping => new PingMessage(),
+            MessageType.MouseMoveRel => new MouseMoveRelMessage(
+                BinaryPrimitives.ReadInt16LittleEndian(p), BinaryPrimitives.ReadInt16LittleEndian(p[2..])),
             MessageType.Pong => new PongMessage(p[0]),
             MessageType.Nack => new NackMessage((NackReason)p[0]),
             MessageType.FileDelay => new DelayMessage(BinaryPrimitives.ReadUInt32LittleEndian(p)),
@@ -145,6 +147,26 @@ public sealed record ScreenSizeMessage(ushort Width, ushort Height) : Message
 {
     public override MessageType Type => MessageType.ScreenSize;
     protected override byte[] EncodePayload() => U16Pair(Width, Height);
+}
+
+/// <summary>
+/// Nudge the pointer by a signed delta in HID relative-report units, for targets absolute positioning
+/// cannot reach: applications that capture the cursor and read raw motion, or a host that does not know
+/// the target's screen size. The target OS applies its own pointer speed and acceleration, so the
+/// landing point is not pixel-exact. The firmware splits a delta beyond +/-127 into several HID reports
+/// and applies every frame in order without coalescing, since dropping one loses distance.
+/// </summary>
+public sealed record MouseMoveRelMessage(short DeltaX, short DeltaY) : Message
+{
+    public override MessageType Type => MessageType.MouseMoveRel;
+
+    protected override byte[] EncodePayload()
+    {
+        var bytes = new byte[4];
+        BinaryPrimitives.WriteInt16LittleEndian(bytes, DeltaX);
+        BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(2), DeltaY);
+        return bytes;
+    }
 }
 
 /// <summary>Liveness probe; the firmware answers with <see cref="PongMessage"/>.</summary>
