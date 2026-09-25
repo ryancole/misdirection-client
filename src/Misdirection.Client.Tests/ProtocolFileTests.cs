@@ -115,6 +115,29 @@ public class ProtocolFileTests : IDisposable
     }
 
     [Fact]
+    public void ReadsAFileAnotherWriterStillHoldsOpen()
+    {
+        var path = TempPath();
+        using var w = ProtocolFileWriter.Append(path);
+        w.Write(ShiftDrag[0]);
+        w.WriteDelay(Micros(1_500));
+        w.Write(ShiftDrag[1]);
+        w.Flush();
+
+        using (var r = ProtocolFileReader.Open(path))
+        {
+            Message[] expected = [ShiftDrag[0], new DelayMessage(1_500), ShiftDrag[1]];
+            Assert.Equal(expected, r.ReadToEnd());
+        }
+        Assert.Equal([(TimeSpan.Zero, ShiftDrag[0]), (Micros(1_500), ShiftDrag[1])], ProtocolFile.ReadTimed(path));
+
+        w.Write(ShiftDrag[2]);
+        w.Flush();
+        Message[] all = [ShiftDrag[0], new DelayMessage(1_500), ShiftDrag[1], ShiftDrag[2]];
+        Assert.Equal(all, ProtocolFile.Read(path));
+    }
+
+    [Fact]
     public void WriterAndReaderStreamOneFrameAtATime()
     {
         using var ms = new MemoryStream();
