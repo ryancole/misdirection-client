@@ -154,7 +154,9 @@ public sealed class ProtocolFileWriter : IDisposable
 
     /// <summary>
     /// Opens <paramref name="path"/> for appending. An existing file must carry a valid header, which is
-    /// checked before any frame is added; a missing or empty file gets a fresh header.
+    /// checked before any frame is added; a missing or empty file gets a fresh header. The file stays
+    /// shared for reading while it is open, so another process can read the recording as it grows
+    /// (see <see cref="ProtocolFileReader.Open"/>).
     /// </summary>
     public static ProtocolFileWriter Append(string path)
     {
@@ -353,9 +355,15 @@ public sealed class ProtocolFileReader : IDisposable
         _parser.FrameDiscarded += r => _discard = r;
     }
 
-    /// <summary>Opens the file at <paramref name="path"/> and validates its header.</summary>
+    /// <summary>
+    /// Opens the file at <paramref name="path"/> and validates its header. The file is shared for reading
+    /// and writing, so one another process is still appending to (a recorder keeps its file open for the
+    /// whole session) opens too, and reads as it stood when the reader got to it: every frame flushed by
+    /// then, followed by a clean end of file. The writer hands each frame to the stream in one piece and
+    /// a recorder flushes whole frames per call, so a reader never sees a torn frame.
+    /// </summary>
     public static ProtocolFileReader Open(string path) =>
-        new(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read));
+        new(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
 
     /// <summary>Protocol version recorded in the header.</summary>
     public byte ProtocolVersion { get; }
