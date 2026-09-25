@@ -11,8 +11,12 @@ namespace Misdirection.Client;
 /// offset 5     protocol version (see <see cref="Protocol.Version"/>)
 /// offset 6..   frames, each [0xAB][type][len][payload][sum]
 /// </code>
-/// The static helpers cover the read-everything / write-everything case; use
-/// <see cref="ProtocolFileWriter"/> and <see cref="ProtocolFileReader"/> to stream.
+/// Timing is optional. A <see cref="DelayMessage"/> (type 0x7F, FILE_DELAY) records the gap before the
+/// frame that follows it and is never sent on the wire; a file without any replays as fast as the link
+/// allows. The static helpers cover the read-everything / write-everything case; use
+/// <see cref="ProtocolFileWriter"/> and <see cref="ProtocolFileReader"/> to stream,
+/// <see cref="ProtocolFileRecorder"/> to capture a live session with timing, and
+/// <see cref="ReadTimed(string)"/> to get a playback schedule.
 /// </summary>
 public static class ProtocolFile
 {
@@ -83,6 +87,24 @@ public static class ProtocolFile
     {
         using var reader = new ProtocolFileReader(stream, leaveOpen);
         return reader.ReadToEnd();
+    }
+
+    /// <summary>
+    /// Reads every wire message in the file with the time at which a replayer should send it, relative
+    /// to the start of the file. Delays are folded into <c>At</c> and not returned. See
+    /// <see cref="ProtocolFileReader.ReadTimed"/> for how to schedule against it.
+    /// </summary>
+    public static IReadOnlyList<(TimeSpan At, Message Message)> ReadTimed(string path)
+    {
+        using var reader = ProtocolFileReader.Open(path);
+        return reader.ReadTimed().ToList();
+    }
+
+    /// <summary>Reads every wire message with its playback offset from <paramref name="stream"/>, starting with the header at its current position.</summary>
+    public static IReadOnlyList<(TimeSpan At, Message Message)> ReadTimed(Stream stream, bool leaveOpen = true)
+    {
+        using var reader = new ProtocolFileReader(stream, leaveOpen);
+        return reader.ReadTimed().ToList();
     }
 
     /// <summary>Reads every frame in the file without decoding it to a typed message.</summary>
@@ -184,6 +206,35 @@ public sealed class ProtocolFileWriter : IDisposable
         foreach (var m in messages) Write(m);
     }
 
+    /// <summary>
+    /// Records a gap before the next frame as one or more <see cref="DelayMessage"/> records.
+    /// <paramref name="delay"/> is rounded to the nearest microsecond; zero (after rounding) writes
+    /// nothing, and a negative value throws <see cref="ArgumentOutOfRangeException"/>. A gap longer than
+    /// <see cref="uint.MaxValue"/> microseconds (about 71.6 minutes) is split across consecutive
+    /// records, each carrying the maximum, so any <see cref="TimeSpan"/> can be stored.
+    /// </summary>
+    /// <returns>The number of records written (zero for a zero delay).</returns>
+    public int WriteDelay(TimeSpan delay)
+    {
+        if (delay < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(delay), delay, "A file delay cannot be negative.");
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // Ticks are 100 ns, so round half up to the nearest 10 ticks.
+        var micros = Math.DivRem(delay.Ticks, TimeSpan.TicksPerMicrosecond, out var remainder);
+        if (remainder * 2 >= TimeSpan.TicksPerMicrosecond) micros++;
+
+        var records = 0;
+        while (micros > 0)
+        {
+            var chunk = (uint)Math.Min(micros, uint.MaxValue);
+            Write(new DelayMessage(chunk));
+            micros -= chunk;
+            records++;
+        }
+        return records;
+    }
+
     /// <summary>Flushes the underlying stream.</summary>
     public void Flush() => _stream.Flush();
 
@@ -193,6 +244,74 @@ public sealed class ProtocolFileWriter : IDisposable
         _disposed = true;
         try { _stream.Flush(); }
         finally { if (!_leaveOpen) _stream.Dispose(); }
+    }
+}
+
+/// <summary>
+/// Captures a live session into a protocol file with timing. Each <see cref="Record"/> call writes a
+/// <see cref="DelayMessage"/> for the time elapsed since the previous recorded message (nothing before
+/// the first) and then the message itself, so <see cref="ProtocolFileReader.ReadTimed"/> replays the
+/// session at its original pace. Time comes from a <see cref="TimeProvider"/> so tests can drive a
+/// fake clock; the default is <see cref="TimeProvider.System"/>.
+/// </summary>
+public sealed class ProtocolFileRecorder : IDisposable
+{
+    private readonly TimeProvider _time;
+    private readonly bool _leaveOpen;
+    private long _lastTimestamp;
+    private bool _disposed;
+
+    /// <summary>
+    /// Wraps <paramref name="writer"/>. Unless <paramref name="leaveOpen"/> is true, disposing the recorder
+    /// disposes the writer.
+    /// </summary>
+    public ProtocolFileRecorder(ProtocolFileWriter writer, TimeProvider? timeProvider = null, bool leaveOpen = false)
+    {
+        ArgumentNullException.ThrowIfNull(writer);
+        Writer = writer;
+        _time = timeProvider ?? TimeProvider.System;
+        _leaveOpen = leaveOpen;
+    }
+
+    /// <summary>Creates or truncates the file at <paramref name="path"/> and records into it.</summary>
+    public static ProtocolFileRecorder Create(string path, TimeProvider? timeProvider = null) =>
+        new(ProtocolFileWriter.Create(path), timeProvider);
+
+    /// <summary>The writer receiving the frames.</summary>
+    public ProtocolFileWriter Writer { get; }
+
+    /// <summary>Number of messages recorded through this instance (delays are not counted).</summary>
+    public long MessagesRecorded { get; private set; }
+
+    /// <summary>
+    /// Writes the gap since the previous recorded message, then <paramref name="message"/>. The gap is
+    /// measured when this is called, so record as close to the send or receive as possible. File-only
+    /// messages are rejected with <see cref="ArgumentException"/>: the recorder owns the timing.
+    /// </summary>
+    public void Record(Message message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (message.IsFileOnly)
+            throw new ArgumentException($"{message.Type} is a file-only record; the recorder writes delays itself.", nameof(message));
+
+        var now = _time.GetTimestamp();
+        if (MessagesRecorded > 0)
+            Writer.WriteDelay(_time.GetElapsedTime(_lastTimestamp, now));
+        Writer.Write(message);
+        _lastTimestamp = now;
+        MessagesRecorded++;
+    }
+
+    /// <summary>Flushes the underlying writer.</summary>
+    public void Flush() => Writer.Flush();
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (_leaveOpen) Writer.Flush();
+        else Writer.Dispose();
     }
 }
 
@@ -210,6 +329,7 @@ public sealed class ProtocolFileReader : IDisposable
     private int _bufferLength;
     private int _bufferPos;
     private long _offset;
+    private long _elapsedMicros;
     private FrameDiscardReason? _discard;
     private bool _disposed;
 
@@ -242,6 +362,13 @@ public sealed class ProtocolFileReader : IDisposable
 
     /// <summary>Number of frames returned so far.</summary>
     public long FramesRead { get; private set; }
+
+    /// <summary>
+    /// Sum of every <see cref="DelayMessage"/> decoded so far, i.e. the file-time position of the reader.
+    /// After reading to the end this includes any delay that trails the last wire message. Frames read
+    /// with <see cref="TryReadFrame"/> are not decoded and do not count.
+    /// </summary>
+    public TimeSpan Elapsed => TimeSpan.FromTicks(_elapsedMicros * TimeSpan.TicksPerMicrosecond);
 
     /// <summary>Reads the next frame; returns false at a clean end of file.</summary>
     public bool TryReadFrame(out Frame frame)
@@ -299,6 +426,8 @@ public sealed class ProtocolFileReader : IDisposable
         if (!TryReadFrame(out var frame)) return false;
         if (!Message.TryDecode(frame, out message, out var error))
             throw new ProtocolFileException($"{error} (frame at offset {frameStart})");
+        if (message is DelayMessage delay)
+            _elapsedMicros += delay.Microseconds;
         return true;
     }
 
@@ -318,10 +447,31 @@ public sealed class ProtocolFileReader : IDisposable
         return frames;
     }
 
-    /// <summary>Enumerates the remaining messages lazily.</summary>
+    /// <summary>Enumerates the remaining messages lazily, delays included.</summary>
     public IEnumerable<Message> ReadAll()
     {
         while (TryRead(out var m)) yield return m;
+    }
+
+    /// <summary>
+    /// Enumerates the remaining wire messages lazily as a playback schedule. <c>At</c> is the running
+    /// total of every delay from the start of the file (see <see cref="Elapsed"/>) up to that message;
+    /// the <see cref="DelayMessage"/> records themselves are consumed and not yielded, so everything
+    /// returned can be handed to <see cref="MisdirectionClient.SendAsync(Message, CancellationToken)"/>.
+    /// <para>
+    /// To replay at the recorded pace, take one reference timestamp before the first message and wait
+    /// until <c>reference + At</c> for each one, rather than sleeping for each gap in turn. Sleeping per
+    /// delay lets timer overshoot accumulate across the file; scheduling against a single clock keeps
+    /// every message within one timer error of its recorded time.
+    /// </para>
+    /// </summary>
+    public IEnumerable<(TimeSpan At, Message Message)> ReadTimed()
+    {
+        while (TryRead(out var m))
+        {
+            if (m.IsFileOnly) continue;
+            yield return (Elapsed, m);
+        }
     }
 
     private static string Describe(FrameDiscardReason reason) => reason switch

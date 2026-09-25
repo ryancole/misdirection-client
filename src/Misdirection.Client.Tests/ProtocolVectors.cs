@@ -11,17 +11,21 @@ public static class ProtocolVectors
 {
     public sealed record VectorFile(int ProtocolVersion, int Sof, List<Vector> Vectors);
 
+    /// <param name="Direction"><c>host_to_device</c>, <c>device_to_host</c> or <c>file_only</c>.</param>
+    /// <param name="Wire">False for records that live only in .msdr files and are never sent.</param>
+    /// <param name="Fields">Decoded field values; <c>long</c> because FILE_DELAY carries a full u32.</param>
     public sealed record Vector(
         string Name,
         string Direction,
+        bool Wire,
         int Type,
         string TypeName,
-        Dictionary<string, int> Fields,
+        Dictionary<string, long> Fields,
         string Hex,
         int[] Bytes)
     {
         /// <summary>The encoded frame. (System.Text.Json would read a <c>byte[]</c> as base64.)</summary>
-        public byte[] Wire => Bytes.Select(b => checked((byte)b)).ToArray();
+        public byte[] Encoded => Bytes.Select(b => checked((byte)b)).ToArray();
 
         public override string ToString() => Name;
     }
@@ -41,6 +45,9 @@ public static class ProtocolVectors
 
     public static IEnumerable<object[]> AsTheoryData() => All.Vectors.Select(v => new object[] { v });
 
+    /// <summary>Only the file-only (FILE_DELAY) vectors.</summary>
+    public static IEnumerable<object[]> FileOnlyTheoryData() => All.Vectors.Where(v => !v.Wire).Select(v => new object[] { v });
+
     /// <summary>Builds the typed message a vector describes from its decoded fields.</summary>
     public static Message ToMessage(Vector v)
     {
@@ -57,6 +64,7 @@ public static class ProtocolVectors
             "PING" => new PingMessage(),
             "PONG" => new PongMessage((byte)f["version"]),
             "NACK" => new NackMessage((NackReason)f["reason"]),
+            "FILE_DELAY" => new DelayMessage(checked((uint)f["micros"])),
             _ => throw new ArgumentException($"Vector file has a type this client does not know: {v.TypeName}"),
         };
     }

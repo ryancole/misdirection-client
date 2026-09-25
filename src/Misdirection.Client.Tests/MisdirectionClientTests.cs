@@ -125,6 +125,44 @@ public class MisdirectionClientTests
     }
 
     [Fact]
+    public async Task SendRejectsFileOnlyMessages()
+    {
+        await using var device = new FakeDevice();
+        await using var client = new MisdirectionClient(device.Stream, leaveOpen: true);
+
+        var delay = new DelayMessage(1000);
+        Assert.True(delay.IsHostToDevice);   // the type range alone would let it through
+        Assert.True(delay.IsFileOnly);
+        await Assert.ThrowsAsync<ArgumentException>(async () => await client.SendAsync(delay));
+        await Assert.ThrowsAsync<ArgumentException>(async () => await client.SendAsync(delay.ToFrame()));
+
+        // Nothing reached the device: the next frame it sees is the panic.
+        await client.PanicAsync();
+        Assert.Equal(new PanicMessage(), await device.ReadSentMessageAsync());
+    }
+
+    [Fact]
+    public async Task InboundFileDelayIsDiscardedNotDispatched()
+    {
+        await using var device = new FakeDevice();
+        await using var client = new MisdirectionClient(device.Stream, leaveOpen: true);
+
+        var discarded = new TaskCompletionSource<FrameDiscardReason>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pong = new TaskCompletionSource<PongMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var all = new List<Message>();
+        client.FrameDiscarded += (_, r) => discarded.TrySetResult(r);
+        client.PongReceived += (_, m) => pong.TrySetResult(m);
+        client.MessageReceived += (_, m) => { lock (all) all.Add(m); };
+
+        await device.DeviceSendRawAsync([0xAB, 0x7F, 0x04, 0xE8, 0x03, 0x00, 0x00, 0x6E]); // well-formed FILE_DELAY 1000 us
+        await device.DeviceSendAsync(new PongMessage(1));
+
+        Assert.Equal(FrameDiscardReason.FileOnlyType, await discarded.Task.WaitAsync(Timeout));
+        Assert.Equal(new PongMessage(1), await pong.Task.WaitAsync(Timeout));
+        lock (all) Assert.Equal([new PongMessage(1)], all);
+    }
+
+    [Fact]
     public async Task ScreenSizeRejectsOutOfRangeDimensions()
     {
         await using var device = new FakeDevice();

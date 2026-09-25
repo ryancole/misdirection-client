@@ -16,7 +16,7 @@ src/
     FrameParser.cs             incremental parser state machine with resync
     Messages.cs                typed records, ToFrame() / Message.Decode()
     HidUsage.cs                HID keyboard usage codes (what goes on the wire)
-    ProtocolFile.cs            .msdr file format: save/load message sequences, streaming reader/writer
+    ProtocolFile.cs            .msdr file format: save/load message sequences, delays, recorder, timed playback
     MisdirectionClient.cs      Stream/SerialPort client with events + PingAsync
   Misdirection.Client.Tests/   xunit; TestData/protocol-vectors.json drives the codec tests
 etc/
@@ -78,6 +78,67 @@ while (reader.TryRead(out var message))
 
 Reading is strict: a bad header, a byte between frames, a bad checksum, an unknown
 type or a truncated final frame throws `ProtocolFileException` naming the offset.
+
+### Timing
+
+A file can carry the gaps between messages as `FILE_DELAY` records (type `0x7F`,
+`DelayMessage` in code): a u32 of microseconds since the previous frame, in the
+normal frame encoding. They exist only in files. `SendAsync` throws
+`ArgumentException` if handed one, and one arriving on the back-channel is reported
+through `FrameDiscarded` as `FileOnlyType` rather than raised as a message, so
+`IsHostToDevice` (true for any type below `0x80`) is not the test for "may go on the
+wire"; `Message.IsFileOnly` is.
+
+`WriteDelay` rounds to the nearest microsecond, writes nothing for zero, throws for
+negative values, and splits anything over `uint.MaxValue` microseconds (about 71.6
+minutes) into consecutive records:
+
+```csharp
+using var writer = ProtocolFileWriter.Create("paced.msdr");
+writer.Write(new MouseMoveMessage(100, 100));
+writer.WriteDelay(TimeSpan.FromMilliseconds(16.7));
+writer.Write(new MouseMoveMessage(110, 104));
+```
+
+`ProtocolFileRecorder` captures a live session: each `Record` writes the time since
+the previous recorded message, then the message. It takes a `TimeProvider`, so tests
+can drive it with a fake clock. Record what the host sends, so the file replays as
+the same sequence:
+
+```csharp
+using var recorder = ProtocolFileRecorder.Create("session.msdr");   // TimeProvider.System
+
+async ValueTask SendAndRecord(Message m)
+{
+    recorder.Record(m);
+    await client.SendAsync(m);
+}
+
+await SendAndRecord(new MouseMoveMessage(100, 100));
+await SendAndRecord(new MouseButtonsMessage(MouseButtons.Left));
+```
+
+For playback, `ReadTimed` yields wire messages only, each with `At`, the running
+total of every delay since the start of the file. Schedule against `At` from one
+reference time rather than sleeping per gap, so timer overshoot cannot accumulate:
+
+```csharp
+await client.ScreenSizeAsync(1920, 1080);
+var start = Stopwatch.GetTimestamp();
+foreach (var (at, message) in ProtocolFile.ReadTimed("session.msdr"))
+{
+    var wait = at - Stopwatch.GetElapsedTime(start);
+    if (wait > TimeSpan.Zero) await Task.Delay(wait);
+    await client.SendAsync(message);
+}
+```
+
+The plain readers (`Read`, `ReadAll`, `TryRead`) return `DelayMessage` like any
+other message, and `ProtocolFileReader.Elapsed` is the sum of delays read so far.
+
+Files without delays are unchanged and the format version stays at 1. A 0.1.x
+reader given a file with delays fails with its usual "Unknown message type" error at
+the first delay's offset.
 
 ## Tests
 

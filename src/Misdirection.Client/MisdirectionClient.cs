@@ -60,7 +60,10 @@ public sealed class MisdirectionClient : IAsyncDisposable, IDisposable
     /// <summary>NACK; arrives asynchronously and only on error.</summary>
     public event EventHandler<NackMessage>? NackReceived;
 
-    /// <summary>A malformed frame on the back-channel was dropped.</summary>
+    /// <summary>
+    /// A frame on the back-channel was dropped: malformed, or a file-only record type that is never
+    /// valid on the wire (<see cref="FrameDiscardReason.FileOnlyType"/>).
+    /// </summary>
     public event EventHandler<FrameDiscardReason>? FrameDiscarded;
 
     /// <summary>The read loop ended (stream closed or faulted). Null exception means a clean close.</summary>
@@ -71,10 +74,17 @@ public sealed class MisdirectionClient : IAsyncDisposable, IDisposable
 
     // --- sending ---------------------------------------------------------------------------
 
-    /// <summary>Writes one frame. Frames are written whole and never interleaved.</summary>
+    /// <summary>
+    /// Writes one frame. Frames are written whole and never interleaved. Throws
+    /// <see cref="ArgumentException"/> for a file-only record type such as <see cref="MessageType.FileDelay"/>,
+    /// which must never reach the device.
+    /// </summary>
     public async ValueTask SendAsync(Frame frame, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(frame);
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Protocol.IsFileOnly(frame.Type))
+            throw new ArgumentException($"{frame.Type} is a file-only record and cannot be sent to the device.", nameof(frame));
         var bytes = frame.Encode();
         await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -88,8 +98,18 @@ public sealed class MisdirectionClient : IAsyncDisposable, IDisposable
         }
     }
 
-    public ValueTask SendAsync(Message message, CancellationToken ct = default) =>
-        SendAsync(message.ToFrame(), ct);
+    /// <summary>
+    /// Encodes and writes one message. Throws <see cref="ArgumentException"/> if <paramref name="message"/>
+    /// is file-only (<see cref="Message.IsFileOnly"/>), so a <see cref="DelayMessage"/> read from a file can
+    /// never reach the device by mistake; a replayer should wait for <see cref="DelayMessage.Duration"/> instead.
+    /// </summary>
+    public ValueTask SendAsync(Message message, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        if (message.IsFileOnly)
+            throw new ArgumentException($"{message.Type} is a file-only record and cannot be sent to the device.", nameof(message));
+        return SendAsync(message.ToFrame(), ct);
+    }
 
     /// <summary>Release every held key and button. Honored regardless of arm state.</summary>
     public ValueTask PanicAsync(CancellationToken ct = default) => SendAsync(new PanicMessage(), ct);
@@ -201,6 +221,12 @@ public sealed class MisdirectionClient : IAsyncDisposable, IDisposable
         if (!Message.TryDecode(frame, out var message, out _))
         {
             FrameDiscarded?.Invoke(this, FrameDiscardReason.BadLength);
+            return;
+        }
+        if (message.IsFileOnly)
+        {
+            // FILE_DELAY is a .msdr record, not a wire message; nothing on the device should ever emit it.
+            FrameDiscarded?.Invoke(this, FrameDiscardReason.FileOnlyType);
             return;
         }
 
